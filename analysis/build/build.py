@@ -1,53 +1,37 @@
-"""Build the HTML version of the analysis from the Markdown source.
+"""Build the HTML versions of the analyses from their Markdown sources.
 
-Usage: python3 analysis/build/build.py
-Reads analysis/Sticky_Situation_Deep_Read.md, writes analysis/Sticky_Situation_Deep_Read.html.
+Usage: python3 analysis/build/build.py [draft2] [draft3]
+With no arguments, builds every analysis listed in PROFILES.
+Each profile reads its Markdown file in analysis/ and writes the HTML next to it.
 Requires pandoc on PATH.
 """
 import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
-SRC = ROOT / "Sticky_Situation_Deep_Read.md"
-OUT = ROOT / "Sticky_Situation_Deep_Read.html"
 
-with tempfile.TemporaryDirectory() as tmp:
-    tpl = pathlib.Path(tmp) / "split.tpl"
-    tpl.write_text("$toc$\n@@@BODY@@@\n$body$\n", encoding="utf-8")
-    raw = subprocess.run(
-        ["pandoc", "-f", "markdown", "-t", "html5", "--toc", "--toc-depth=2",
-         "-s", f"--template={tpl}", str(SRC)],
-        check=True, capture_output=True, text=True,
-    ).stdout
-
-toc, body = raw.split("@@@BODY@@@", 1)
-
-# Tables scroll inside their own container.
-body = body.replace("<table>", '<div class="table-wrap"><table>').replace("</table>", "</table></div>")
-
-# "Score: 9/10." / "Rating: 9/10." / "Overall: 8.5/10." lead-ins become stamps.
-def stamp(m):
-    label, value, tail = m.group(1), m.group(2), m.group(3)
-    big = " big" if label == "Overall" else ""
-    tail = tail.strip()
-    tail = "" if tail in ("", ".") else " " + tail.lstrip(". ")
-    return f'<p class="score{big}"><span class="stamp">{label} {value}</span>{tail}'
-
-body = re.sub(r'<p><strong>(Score|Rating|Overall): ([0-9.]+/10)([^<]*)</strong>', stamp, body)
-
-# Italic-only paragraph right after an h2 is the chapter meta line.
-body = re.sub(r'(</h2>\s*)<p><em>(.*?)</em></p>', r'\1<p class="meta"><em>\2</em></p>', body, flags=re.S)
-
-# Chapter numbers like "1.1" or "4.0" at the start of an h2 get a tape label.
-body = re.sub(r'(<h2 id="[^"]*">)(\d\.\d{1,2}) ', r'\1<span class="chnum">\2</span> ', body)
-
-# Sidebar and mobile copies of the contents; the mobile copy drops ids to keep them unique.
-mobile_toc = re.sub(r'\sid="toc-[^"]*"', "", toc)
-
-css = (HERE / "page.css").read_text(encoding="utf-8")
+PROFILES = {
+    "draft2": {
+        "src": "Sticky_Situation_Deep_Read.md",
+        "out": "Sticky_Situation_Deep_Read.html",
+        "title": "Sticky Situation Deep Read",
+        "tape": "Prologue to S4 Ch6",
+        "lede": "Every chapter, every character, every callback. What happens, the small details, what works, what I'd push on, and a score for each, followed by character dossiers, themes, a continuity ledger, theories, and craft notes.",
+        "stats": ["<b>53</b> chapters + Prologue", "<b>~104,700</b> words read", "<b>4</b> sections", "Overall <b>8.5/10</b>"],
+    },
+    "draft3": {
+        "src": "Sticky_Situation_3_Deep_Read.md",
+        "out": "Sticky_Situation_3_Deep_Read.html",
+        "title": "Sticky Situation 3 Deep Read",
+        "tape": "Draft 3 · Prologue to S4 Ch7",
+        "lede": "A complete read of Draft 3: what changed since the last draft, every chapter scored, every character, what every name means, every power and its rules, every theme, motif, and callback, a continuity ledger, theories, craft notes, and a decoder for every chapter title.",
+        "stats": ["<b>54</b> chapters + Prologue", "<b>~106,800</b> words read", "<b>1</b> new chapter", "Overall <b>8.5/10</b>"],
+    },
+}
 
 js = r"""
 (function () {
@@ -110,7 +94,52 @@ js = r"""
 })();
 """
 
-page = f"""<title>Sticky Situation Deep Read</title>
+
+def render(src):
+    with tempfile.TemporaryDirectory() as tmp:
+        tpl = pathlib.Path(tmp) / "split.tpl"
+        tpl.write_text("$toc$\n@@@BODY@@@\n$body$\n", encoding="utf-8")
+        raw = subprocess.run(
+            ["pandoc", "-f", "markdown", "-t", "html5", "--toc", "--toc-depth=2",
+             "-s", f"--template={tpl}", str(src)],
+            check=True, capture_output=True, text=True,
+        ).stdout
+    return raw
+
+
+def build(cfg):
+    src = ROOT / cfg["src"]
+    out = ROOT / cfg["out"]
+    raw = render(src)
+
+    toc, body = raw.split("@@@BODY@@@", 1)
+
+    # Tables scroll inside their own container.
+    body = body.replace("<table>", '<div class="table-wrap"><table>').replace("</table>", "</table></div>")
+
+    # "Score: 9/10." / "Rating: 9/10." / "Overall: 8.5/10." lead-ins become stamps.
+    def stamp(m):
+        label, value, tail = m.group(1), m.group(2), m.group(3)
+        big = " big" if label == "Overall" else ""
+        tail = tail.strip()
+        tail = "" if tail in ("", ".") else " " + tail.lstrip(". ")
+        return f'<p class="score{big}"><span class="stamp">{label} {value}</span>{tail}'
+
+    body = re.sub(r'<p><strong>(Score|Rating|Overall): ([0-9.]+/10)([^<]*)</strong>', stamp, body)
+
+    # Italic-only paragraph right after an h2 is the chapter meta line.
+    body = re.sub(r'(</h2>\s*)<p><em>(.*?)</em></p>', r'\1<p class="meta"><em>\2</em></p>', body, flags=re.S)
+
+    # Chapter numbers like "1.1" or "4.0" at the start of an h2 get a tape label.
+    body = re.sub(r'(<h2 id="[^"]*">)(\d\.\d{1,2}) ', r'\1<span class="chnum">\2</span> ', body)
+
+    # Sidebar and mobile copies of the contents; the mobile copy drops ids to keep them unique.
+    mobile_toc = re.sub(r'\sid="toc-[^"]*"', "", toc)
+
+    css = (HERE / "page.css").read_text(encoding="utf-8")
+    stats = "\n".join(f"        <li>{s}</li>" for s in cfg["stats"])
+
+    page = f"""<title>{cfg['title']}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=IBM+Plex+Mono:wght@400;600&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,700;1,7..72,400&display=swap">
@@ -127,16 +156,13 @@ page = f"""<title>Sticky Situation Deep Read</title>
   </aside>
   <main id="main">
     <header class="masthead">
-      <span class="tape">Prologue to S4 Ch6</span>
+      <span class="tape">{cfg['tape']}</span>
       <p class="eyebrow">A complete read of</p>
       <p class="book-line">Tales of Being Limitless</p>
       <h1 class="title">Sticky<span class="sub">Situation</span></h1>
-      <p class="lede">Every chapter, every character, every callback. What happens, the small details, what works, what I'd push on, and a score for each, followed by character dossiers, themes, a continuity ledger, theories, and craft notes.</p>
+      <p class="lede">{cfg['lede']}</p>
       <ul class="stats">
-        <li><b>53</b> chapters + Prologue</li>
-        <li><b>~104,700</b> words read</li>
-        <li><b>4</b> sections</li>
-        <li>Overall <b>8.5/10</b></li>
+{stats}
       </ul>
     </header>
     <details class="mobile-toc">
@@ -159,5 +185,11 @@ page = f"""<title>Sticky Situation Deep Read</title>
 </script>
 """
 
-OUT.write_text(page, encoding="utf-8")
-print(f"wrote {OUT} ({len(page):,} bytes)")
+    out.write_text(page, encoding="utf-8")
+    print(f"wrote {out} ({len(page):,} bytes)")
+
+
+if __name__ == "__main__":
+    names = sys.argv[1:] or list(PROFILES)
+    for name in names:
+        build(PROFILES[name])
